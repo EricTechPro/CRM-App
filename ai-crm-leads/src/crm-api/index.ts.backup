@@ -1,0 +1,801 @@
+import { Service } from '@liquidmetal-ai/raindrop-framework';
+import { z } from 'zod';
+import { Env } from './raindrop.gen';
+
+// Zod schemas for data validation
+const LeadSchema = z.object({
+  id: z.string().optional(),
+  name: z.string(),
+  email: z.string().email(),
+  phone: z.string().optional(),
+  company: z.string().optional(),
+  source: z.string().optional(),
+  status: z.enum(['new', 'contacted', 'qualified', 'proposal', 'won', 'lost']).optional(),
+  score: z.number().min(0).max(100).optional(),
+  notes: z.string().optional(),
+  industry: z.string().optional(),
+  companySize: z.enum(['small', 'medium', 'large']).optional(),
+  stage: z.enum(['new', 'contacted', 'qualified', 'proposal', 'won', 'lost']).optional(),
+  location: z.string().optional(),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional()
+});
+
+const QuerySchema = z.object({
+  query: z.string().min(1),
+  table: z.string().optional()
+});
+
+const DocumentAnalyzeSchema = z.object({
+  document_key: z.string(),
+  document_type: z.enum(['proposal', 'contract', 'email', 'other']).optional()
+});
+
+const LearnSchema = z.object({
+  pattern_data: z.record(z.any()),
+  pattern_type: z.enum(['conversion', 'scoring', 'behavior']),
+  metadata: z.record(z.string()).optional()
+});
+
+type Lead = z.infer<typeof LeadSchema>;
+
+export default class extends Service<Env> {
+  // In-memory storage for leads (demo purposes)
+  private leads: Map<string, any> = new Map();
+  
+  // Initialize in-memory storage
+  private initializeStorage(): void {
+    if (this.leads.size === 0) {
+      // Add some sample data for demo
+      this.addSampleLeads();
+    }
+  }
+  
+  private addSampleLeads(): void {
+    const sampleLeads = [
+      {
+        id: "lead-001",
+        name: "Sarah Johnson",
+        email: "sarah@techcorp.com", 
+        company: "TechCorp Industries",
+        industry: "technology",
+        companySize: "large",
+        stage: "qualified",
+        location: "California",
+        score: 85,
+        notes: "CEO referral - $500K budget approved",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      },
+      {
+        id: "lead-002", 
+        name: "James Wilson",
+        email: "james@energycorp.com",
+        company: "Energy Corp Texas",
+        industry: "energy", 
+        companySize: "large",
+        stage: "prospect",
+        location: "Texas",
+        score: 72,
+        notes: "Legacy modernization project",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      },
+      {
+        id: "lead-003",
+        name: "Dr. Emily Rodriguez", 
+        email: "emily@healthtech.com",
+        company: "HealthTech Innovations",
+        industry: "healthcare",
+        companySize: "small",
+        stage: "proposal", 
+        location: "California",
+        score: 90,
+        notes: "AI for patient data - HIPAA compliance",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+    ];
+    
+    sampleLeads.forEach(lead => {
+      this.leads.set(lead.id, lead);
+    });
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    // Initialize storage with sample data
+    this.initializeStorage();
+    // Add CORS headers
+    const corsHeaders = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Content-Type': 'application/json'
+    };
+
+    // Handle preflight OPTIONS requests
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { 
+        status: 204,
+        headers: corsHeaders
+      });
+    }
+
+    try {
+      const url = new URL(request.url);
+      const pathname = url.pathname;
+
+      this.env.logger.info(`API Request: ${request.method} ${pathname}`);
+
+      // Route requests
+      if (pathname.startsWith('/api/leads') && request.method === 'GET') {
+        return await this.getLeads(request, corsHeaders);
+      } else if (pathname === '/api/leads' && request.method === 'POST') {
+        return await this.createLead(request, corsHeaders);
+      } else if (pathname.match(/^\/api\/leads\/[^/]+$/) && request.method === 'PUT') {
+        return await this.updateLead(request, corsHeaders);
+      } else if (pathname.match(/^\/api\/leads\/[^/]+$/) && request.method === 'DELETE') {
+        return await this.deleteLead(request, corsHeaders);
+      } else if (pathname === '/api/query' && request.method === 'POST') {
+        return await this.naturalLanguageQuery(request, corsHeaders);
+      } else if (pathname === '/api/documents/analyze' && request.method === 'POST') {
+        return await this.analyzeDocument(request, corsHeaders);
+      } else if (pathname === '/api/insights/patterns' && request.method === 'GET') {
+        return await this.getInsightPatterns(request, corsHeaders);
+      } else if (pathname === '/api/memory/learn' && request.method === 'POST') {
+        return await this.learnPattern(request, corsHeaders);
+      } else if (pathname === '/api/leads/score/realtime' && request.method === 'GET') {
+        return await this.getRealtimeScores(request, corsHeaders);
+      }
+
+      return new Response(
+        JSON.stringify({ error: 'Not found', path: pathname }), 
+        { 
+          status: 404, 
+          headers: corsHeaders 
+        }
+      );
+
+    } catch (error) {
+      this.env.logger.error(`API Error: ${error}`);
+      return new Response(
+        JSON.stringify({ 
+          error: 'Internal server error', 
+          message: error instanceof Error ? error.message : 'Unknown error' 
+        }),
+        { 
+          status: 500, 
+          headers: corsHeaders 
+        }
+      );
+    }
+  }
+
+  // GET /api/leads - Retrieve leads with optional filters
+  private async getLeads(request: Request, headers: Record<string, string>): Promise<Response> {
+    // DEMO DATA - IMMEDIATE RETURN
+    return new Response(JSON.stringify([
+      {id: "demo-1", name: "Sarah Johnson", email: "sarah@techcorp.com", company: "TechCorp", score: 85},
+      {id: "demo-2", name: "James Wilson", email: "james@energy.com", company: "Energy Corp", score: 72}
+    ]), { headers });
+  }
+      {
+        id: "lead-001",
+        name: "Sarah Johnson", 
+        email: "sarah.johnson@techcorp.com",
+        company: "TechCorp Industries",
+        phone: "+1-555-0123",
+        source: "referral",
+        status: "new",
+        score: 85,
+        notes: "CEO referral - urgent Q1 implementation. Budget approved $500K.",
+        industry: "technology",
+        companySize: "large",
+        stage: "qualified",
+        location: "California",
+        created_at: "2025-08-28T23:29:16.093Z",
+        updated_at: "2025-08-28T23:29:16.093Z"
+      },
+      {
+        id: "lead-002",
+        name: "James Wilson",
+        email: "james.wilson@energycorp.com", 
+        company: "Energy Corp Texas",
+        phone: "+1-214-555-0456",
+        source: "referral",
+        status: "new",
+        score: 72,
+        notes: "Legacy infrastructure modernization. Multi-year project potential.",
+        industry: "energy",
+        companySize: "large",
+        stage: "prospect", 
+        location: "Texas",
+        created_at: "2025-08-28T23:30:16.093Z",
+        updated_at: "2025-08-28T23:30:16.093Z"
+      },
+      {
+        id: "lead-003",
+        name: "Dr. Emily Rodriguez",
+        email: "emily@healthtech-innovations.com",
+        company: "HealthTech Innovations",
+        phone: "+1-555-0789",
+        source: "conference", 
+        status: "new",
+        score: 92,
+        notes: "AI for patient data analysis. HIPAA compliance required.",
+        industry: "healthcare",
+        companySize: "small",
+        stage: "proposal",
+        location: "California",
+        created_at: "2025-08-28T23:31:16.093Z",
+        updated_at: "2025-08-28T23:31:16.093Z"
+      },
+      {
+        id: "lead-004", 
+        name: "Robert Kim",
+        email: "robert.kim@bigbank.com",
+        company: "BigBank Financial", 
+        phone: "+1-555-0321",
+        source: "cold_call",
+        status: "new",
+        score: 78,
+        notes: "Compliance requirements critical. SOX and GDPR needed.",
+        industry: "financial",
+        companySize: "large",
+        stage: "qualified",
+        location: "New York", 
+        created_at: "2025-08-28T23:32:16.093Z",
+        updated_at: "2025-08-28T23:32:16.093Z"
+      },
+      {
+        id: "lead-005",
+        name: "Lisa Thompson",
+        email: "lisa@shopfast.com",
+        company: "ShopFast E-commerce",
+        phone: "+1-555-0654",
+        source: "google_ads",
+        status: "new", 
+        score: 55,
+        notes: "Peak season approaching. Needs solution before holidays.",
+        industry: "retail",
+        companySize: "medium",
+        stage: "prospect",
+        location: "Texas",
+        created_at: "2025-08-28T23:33:16.093Z",
+        updated_at: "2025-08-28T23:33:16.093Z"
+      }
+    ];
+
+    // Apply filters
+    let results = sampleLeads;
+    if (status) {
+      results = results.filter(lead => lead.status === status || lead.stage === status);
+    }
+    
+    // Apply pagination
+    const total = results.length;
+    results = results.slice(offset, offset + limit);
+
+    return new Response(JSON.stringify(results), { 
+      headers: {
+        ...headers,
+        'X-Total-Count': total.toString()
+      }
+    });
+  }
+
+  // POST /api/leads - Create new lead with AI scoring
+  private async createLead(request: Request, headers: Record<string, string>): Promise<Response> {
+    const body = await request.json();
+    const validatedLead = LeadSchema.parse(body);
+
+    // Get AI-powered lead score
+    const leadScore = await this.calculateLeadScore(validatedLead);
+    
+    const leadId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    
+    const insertQuery = `
+      INSERT INTO leads (id, name, email, phone, company, source, status, score, notes, industry, companySize, stage, location, created_at, updated_at)
+      VALUES ('${leadId}', '${validatedLead.name}', '${validatedLead.email}', 
+              '${validatedLead.phone || ''}', '${validatedLead.company || ''}', 
+              '${validatedLead.source || 'api'}', '${validatedLead.status || 'new'}', 
+              ${leadScore}, '${validatedLead.notes || ''}', '${validatedLead.industry || ''}',
+              '${validatedLead.companySize || ''}', '${validatedLead.stage || 'new'}',
+              '${validatedLead.location || ''}', '${now}', '${now}')
+    `;
+
+    // Store in memory for immediate availability
+    const newLead = {
+      id: leadId,
+      name: validatedLead.name,
+      email: validatedLead.email,
+      phone: validatedLead.phone || '',
+      company: validatedLead.company || '',
+      source: validatedLead.source || 'api',
+      status: validatedLead.status || 'new',
+      score: leadScore,
+      notes: validatedLead.notes || '',
+      industry: validatedLead.industry || '',
+      companySize: validatedLead.companySize || '',
+      stage: validatedLead.stage || 'new',
+      location: validatedLead.location || '',
+      created_at: now,
+      updated_at: now
+    };
+    
+    this.leads.set(leadId, newLead);
+    
+    // Also try to store in database (may fail silently)
+    try {
+      await this.env.CRM_DATABASE.executeQuery({ sqlQuery: insertQuery });
+    } catch (error) {
+      console.warn('Database storage failed, using in-memory only:', error);
+    }
+
+    // Queue for pattern learning
+    await this.env.AI_PROCESSING.send({
+      eventType: 'lead_qualified',
+      leadId,
+      userId: 'api-user',
+      timestamp: now,
+      conversionData: {
+        leadScore,
+        companySize: 'unknown',
+        industry: 'unknown',
+        region: 'unknown',
+        painPoints: [],
+        decisionMakers: [],
+        sourceChannel: validatedLead.source || 'api',
+        touchpoints: [],
+        documentsShared: [],
+        meetingCount: 0,
+        emailCount: 0,
+        responseTime: 0,
+        salesCycle: 0,
+        conversionStage: 'new'
+      }
+    });
+
+    return new Response(JSON.stringify(newLead), { 
+      status: 201, 
+      headers 
+    });
+  }
+
+  // PUT /api/leads/:id - Update lead
+  private async updateLead(request: Request, headers: Record<string, string>): Promise<Response> {
+    const url = new URL(request.url);
+    const leadId = url.pathname.split('/').pop()!;
+    const body = await request.json();
+    const validatedLead = LeadSchema.partial().parse(body);
+
+    // Check if lead exists
+    const existingResult = await this.env.CRM_DATABASE.executeQuery({
+      sqlQuery: `SELECT * FROM leads WHERE id = '${leadId}'`
+    });
+
+    let existingLead;
+    try {
+      const parsed = JSON.parse(existingResult.results || '[]');
+      existingLead = Array.isArray(parsed) && parsed.length > 0 ? parsed[0] : null;
+    } catch {
+      existingLead = null;
+    }
+
+    if (!existingLead) {
+      return new Response(JSON.stringify({ error: 'Lead not found' }), { 
+        status: 404, 
+        headers 
+      });
+    }
+
+    // Recalculate score if relevant fields changed
+    let score = validatedLead.score;
+    if (!score && (validatedLead.company || validatedLead.source || validatedLead.email)) {
+      const fullLead = { ...existingLead, ...validatedLead };
+      score = await this.calculateLeadScore(fullLead as Lead);
+    }
+
+    const updateFields: string[] = [];
+    
+    Object.entries(validatedLead).forEach(([key, value]) => {
+      if (value !== undefined && key !== 'id') {
+        updateFields.push(`${key} = '${value}'`);
+      }
+    });
+
+    if (score !== undefined) {
+      updateFields.push(`score = ${score}`);
+    }
+
+    updateFields.push(`updated_at = '${new Date().toISOString()}'`);
+
+    const updateQuery = `
+      UPDATE leads 
+      SET ${updateFields.join(', ')}
+      WHERE id = '${leadId}'
+    `;
+
+    await this.env.CRM_DATABASE.executeQuery({ sqlQuery: updateQuery });
+
+    // Get updated lead
+    const updatedResult = await this.env.CRM_DATABASE.executeQuery({
+      sqlQuery: `SELECT * FROM leads WHERE id = '${leadId}'`
+    });
+
+    let updatedLead;
+    try {
+      const parsed = JSON.parse(updatedResult.results || '[]');
+      updatedLead = Array.isArray(parsed) && parsed.length > 0 ? parsed[0] : null;
+    } catch {
+      updatedLead = null;
+    }
+
+    return new Response(JSON.stringify(updatedLead), { headers });
+  }
+
+  // DELETE /api/leads/:id - Delete lead
+  private async deleteLead(request: Request, headers: Record<string, string>): Promise<Response> {
+    const url = new URL(request.url);
+    const leadId = url.pathname.split('/').pop()!;
+
+    const result = await this.env.CRM_DATABASE.executeQuery({
+      sqlQuery: `DELETE FROM leads WHERE id = '${leadId}'`
+    });
+
+    if (result.status !== 200) {
+      return new Response(JSON.stringify({ error: 'Lead not found or could not be deleted' }), { 
+        status: 404, 
+        headers 
+      });
+    }
+
+    return new Response(JSON.stringify({ success: true }), { headers });
+  }
+
+  // POST /api/query - Natural language database queries
+  private async naturalLanguageQuery(request: Request, headers: Record<string, string>): Promise<Response> {
+    const body = await request.json();
+    const { query, table } = QuerySchema.parse(body);
+
+    try {
+      const result = await this.env.CRM_DATABASE.executeQuery({ textQuery: query });
+      
+      let results = [];
+      if (result.results) {
+        try {
+          results = JSON.parse(result.results);
+        } catch {
+          results = [];
+        }
+      }
+      
+      return new Response(JSON.stringify({
+        query: result.queryExecuted,
+        results,
+        rowCount: Array.isArray(results) ? results.length : 0,
+        aiReasoning: result.aiReasoning
+      }), { headers });
+      
+    } catch (error) {
+      this.env.logger.error(`Natural language query error: ${error}`);
+      return new Response(JSON.stringify({ 
+        error: 'Query execution failed',
+        message: error instanceof Error ? error.message : 'Unknown error'
+      }), { 
+        status: 400, 
+        headers 
+      });
+    }
+  }
+
+  // POST /api/documents/analyze - AI document processing
+  private async analyzeDocument(request: Request, headers: Record<string, string>): Promise<Response> {
+    const body = await request.json();
+    const { document_key, document_type } = DocumentAnalyzeSchema.parse(body);
+
+    // Get document from SmartBucket
+    const document = await this.env.SALES_DOCUMENTS.get(document_key);
+    if (!document) {
+      return new Response(JSON.stringify({ error: 'Document not found' }), { 
+        status: 404, 
+        headers 
+      });
+    }
+
+    const documentText = await document.text();
+    
+    // AI analysis prompt
+    const analysisPrompt = `Analyze this ${document_type || 'business'} document and extract key information:
+    
+Document content:
+${documentText}
+
+Please provide a JSON response with:
+1. summary: Brief summary of the document
+2. key_points: Array of important points
+3. entities: Extracted names, companies, dates, amounts
+4. sentiment: positive/negative/neutral
+5. action_items: Things that need to be done
+6. priority: high/medium/low based on content
+`;
+
+    const aiResponse = await this.env.AI.run('@cf/meta/llama-3-8b-instruct', {
+      messages: [{ role: 'user', content: analysisPrompt }]
+    });
+
+    let analysis;
+    try {
+      const responseText = typeof aiResponse === 'object' && 'response' in aiResponse ? aiResponse.response as string : String(aiResponse);
+      analysis = JSON.parse(responseText);
+    } catch {
+      // If AI didn't return valid JSON, structure the response
+      const responseText = typeof aiResponse === 'object' && 'response' in aiResponse ? aiResponse.response as string : String(aiResponse);
+      analysis = {
+        summary: responseText ? responseText.substring(0, 500) : 'Document analyzed',
+        key_points: [],
+        entities: {},
+        sentiment: 'neutral',
+        action_items: [],
+        priority: 'medium'
+      };
+    }
+
+    // Store analysis in SmartMemory
+    const memorySession = await this.env.AI_INSIGHTS.startWorkingMemorySession();
+    await memorySession.workingMemory.putMemory({
+      content: JSON.stringify(analysis),
+      key: `document_analysis_${document_key}`,
+      timeline: 'document_analysis'
+    });
+
+    return new Response(JSON.stringify({
+      document_key,
+      analysis,
+      processed_at: new Date().toISOString()
+    }), { headers });
+  }
+
+  // GET /api/insights/patterns - AI learning recommendations
+  private async getInsightPatterns(request: Request, headers: Record<string, string>): Promise<Response> {
+    const url = new URL(request.url);
+    const type = url.searchParams.get('type') || 'all';
+    const limit = parseInt(url.searchParams.get('limit') || '10');
+
+    // Get conversion patterns from vector index
+    const conversionPatterns = await this.env.CONVERSION_PATTERNS.query([0.1, 0.2, 0.3], { topK: limit });
+    
+    // Get insights from SmartMemory
+    const memorySession = await this.env.AI_INSIGHTS.startWorkingMemorySession();
+    const insights = await memorySession.workingMemory.getMemory({ 
+      timeline: 'insights',
+      nMostRecent: limit 
+    }) || [];
+
+    // Get lead statistics for patterns
+    const leadStatsResult = await this.env.CRM_DATABASE.executeQuery({
+      sqlQuery: `
+        SELECT 
+          status,
+          COUNT(*) as count,
+          AVG(score) as avg_score,
+          source,
+          DATE(created_at) as date
+        FROM leads 
+        WHERE created_at >= date('now', '-30 days')
+        GROUP BY status, source, DATE(created_at)
+        ORDER BY date DESC
+        LIMIT 50
+      `
+    });
+
+    let leadStats = [];
+    try {
+      leadStats = JSON.parse(leadStatsResult.results || '[]');
+    } catch {
+      leadStats = [];
+    }
+
+    // Use AI to generate insights
+    const insightPrompt = `Based on this CRM data, provide insights and recommendations:
+
+Lead Statistics:
+${JSON.stringify(leadStats, null, 2)}
+
+Recent Patterns:
+${JSON.stringify(insights.slice(0, 5), null, 2)}
+
+Please provide actionable insights about:
+1. Lead conversion patterns
+2. Best performing sources
+3. Scoring accuracy trends
+4. Recommendations for improvement
+5. Potential issues or opportunities
+
+Format as JSON with insights array.`;
+
+    const aiResponse = await this.env.AI.run('@cf/meta/llama-3-8b-instruct', {
+      messages: [{ role: 'user', content: insightPrompt }]
+    });
+
+    let aiInsights;
+    try {
+      const responseText = typeof aiResponse === 'object' && 'response' in aiResponse ? aiResponse.response as string : String(aiResponse);
+      aiInsights = JSON.parse(responseText);
+    } catch {
+      const responseText = typeof aiResponse === 'object' && 'response' in aiResponse ? aiResponse.response as string : String(aiResponse);
+      aiInsights = { insights: [responseText || 'No insights available'] };
+    }
+
+    return new Response(JSON.stringify({
+      patterns: {
+        conversion: conversionPatterns,
+        lead_statistics: leadStats,
+        ai_insights: aiInsights,
+        memory_insights: insights.slice(0, 5)
+      },
+      generated_at: new Date().toISOString()
+    }), { headers });
+  }
+
+  // POST /api/memory/learn - SmartMemory pattern storage
+  private async learnPattern(request: Request, headers: Record<string, string>): Promise<Response> {
+    const body = await request.json();
+    const { pattern_data, pattern_type, metadata } = LearnSchema.parse(body);
+
+    const patternId = crypto.randomUUID();
+    const timestamp = new Date().toISOString();
+    
+    const patternEntry = {
+      id: patternId,
+      type: pattern_type,
+      data: pattern_data,
+      metadata: metadata || {},
+      created_at: timestamp
+    };
+
+    // Store in SmartMemory
+    const memorySession = await this.env.AI_INSIGHTS.startWorkingMemorySession();
+    await memorySession.workingMemory.putMemory({
+      content: JSON.stringify(patternEntry),
+      key: `pattern_${pattern_type}_${patternId}`,
+      timeline: 'pattern_learning'
+    });
+
+    // If it's a conversion pattern, also store in vector index
+    if (pattern_type === 'conversion' && pattern_data.features) {
+      const embedding = await this.generateEmbedding(JSON.stringify(pattern_data));
+      await this.env.CONVERSION_PATTERNS.upsert([{
+        id: patternId,
+        values: embedding,
+        metadata: { type: pattern_type, ...metadata }
+      }]);
+    }
+
+    // Queue for further processing
+    await this.env.AI_PROCESSING.send({
+      eventType: 'conversion_success',
+      leadId: 'pattern-learning',
+      userId: 'system',
+      timestamp,
+      conversionData: {
+        leadScore: 0,
+        companySize: 'unknown',
+        industry: 'unknown',
+        region: 'unknown',
+        painPoints: [],
+        decisionMakers: [],
+        sourceChannel: 'pattern-learning',
+        touchpoints: [],
+        documentsShared: [],
+        meetingCount: 0,
+        emailCount: 0,
+        responseTime: 0,
+        salesCycle: 0,
+        conversionStage: 'system'
+      }
+    });
+
+    return new Response(JSON.stringify({
+      pattern_id: patternId,
+      stored: true,
+      timestamp
+    }), { 
+      status: 201, 
+      headers 
+    });
+  }
+
+  // GET /api/leads/score/realtime - Live scoring updates
+  private async getRealtimeScores(request: Request, headers: Record<string, string>): Promise<Response> {
+    const url = new URL(request.url);
+    const leadIds = url.searchParams.get('ids')?.split(',') || [];
+    
+    if (leadIds.length === 0) {
+      return new Response(JSON.stringify({ error: 'No lead IDs provided' }), { 
+        status: 400, 
+        headers 
+      });
+    }
+
+    // Get current leads
+    const idsQuery = leadIds.map(id => `'${id}'`).join(',');
+    const leadsResult = await this.env.CRM_DATABASE.executeQuery({
+      sqlQuery: `SELECT * FROM leads WHERE id IN (${idsQuery})`
+    });
+
+    let leads = [];
+    try {
+      leads = JSON.parse(leadsResult.results || '[]');
+    } catch {
+      leads = [];
+    }
+
+    const scores: Record<string, number> = {};
+    
+    // Calculate real-time scores for each lead
+    for (const lead of leads) {
+      const score = await this.calculateLeadScore(lead as Lead);
+      scores[lead.id as string] = score;
+      
+      // Update database if score changed significantly
+      const currentScore = lead.score as number || 0;
+      if (Math.abs(score - currentScore) > 5) {
+        await this.env.CRM_DATABASE.executeQuery({
+          sqlQuery: `UPDATE leads SET score = ${score}, updated_at = '${new Date().toISOString()}' WHERE id = '${lead.id}'`
+        });
+      }
+    }
+
+    return new Response(JSON.stringify({
+      scores,
+      updated_at: new Date().toISOString(),
+      leads_processed: Object.keys(scores).length
+    }), { headers });
+  }
+
+  // Helper: Calculate AI-powered lead score
+  private async calculateLeadScore(lead: Lead): Promise<number> {
+    const scoringPrompt = `Score this lead from 0-100 based on conversion likelihood:
+
+Lead Data:
+- Name: ${lead.name}
+- Email: ${lead.email}
+- Company: ${lead.company || 'Not provided'}
+- Phone: ${lead.phone || 'Not provided'}
+- Source: ${lead.source || 'Unknown'}
+- Status: ${lead.status || 'new'}
+
+Scoring criteria:
+- Company email domain (+20)
+- Phone number provided (+15)  
+- Professional email format (+10)
+- Known high-value source (+25)
+- Complete profile (+10)
+
+Return only the numeric score (0-100).`;
+
+    try {
+      const response = await this.env.AI.run('@cf/meta/llama-3-8b-instruct', {
+        messages: [{ role: 'user', content: scoringPrompt }]
+      });
+      
+      const responseText = typeof response === 'object' && 'response' in response ? response.response as string : String(response);
+      const score = parseInt((responseText || '50').match(/\d+/)?.[0] || '50');
+      return Math.min(100, Math.max(0, score));
+    } catch (error) {
+      this.env.logger.error(`Score calculation error: ${error}`);
+      return 50; // Default score on error
+    }
+  }
+
+  // Helper: Generate embedding for vector storage
+  private async generateEmbedding(text: string): Promise<number[]> {
+    // Simple hash-based embedding for demo (in production, use proper embeddings)
+    const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    const array = new Uint8Array(hash);
+    const embedding = Array.from(array.slice(0, 768)).map(x => (x - 127.5) / 127.5);
+    return embedding;
+  }
+}

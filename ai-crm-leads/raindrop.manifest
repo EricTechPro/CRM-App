@@ -1,0 +1,51 @@
+application "ai-crm-leads" {
+  // Main API service for CRM functionality
+  service "crm-api" {
+    visibility = "public"
+  }
+
+  // SmartSQL database for lead, contact, and deal data with natural language queries
+  smartsql "crm-database" {}
+
+  // Vector database for AI pattern learning and similarity matching
+  vector_index "conversion-patterns" {
+    dimensions = 768
+    metric = "cosine"
+  }
+
+  // SmartBucket for AI-powered document processing (proposals, contracts)
+  smartbucket "sales-documents" {}
+
+  // SmartMemory for AI agent state and learning
+  smartmemory "ai-insights" {}
+
+  // Actor for real-time lead scoring and session management
+  actor "lead-scorer" {
+    visibility = "private"
+  }
+
+  // Actor for user session and territory management
+  actor "user-sessions" {
+    visibility = "private"
+  }
+
+  // Queue for async AI processing tasks
+  queue "ai-processing" {}
+
+  // Observer for document analysis when files are uploaded
+  observer "document-processor" {
+    source {
+      bucket = "sales-documents"
+      rule {
+        actions = ["PutObject", "CompleteMultipartUpload"]
+      }
+    }
+  }
+
+  // Observer for AI learning when new patterns are identified
+  observer "pattern-learner" {
+    source {
+      queue = "ai-processing"
+    }
+  }
+}
